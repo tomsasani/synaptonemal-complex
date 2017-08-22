@@ -11,83 +11,110 @@ from collections import defaultdict
 import sys
 import csv
 
-rc('text', usetex=True)
+#rc('text', usetex=True)
 
 sns.set(style="white", palette="muted", color_codes=True)
 
 p = argparse.ArgumentParser()
 p.add_argument('--f', nargs='*')
 p.add_argument('-chrom', default='all')
-p.add_argument('-w', type=int, default=500)
 args = p.parse_args()
 
-a, b = defaultdict(list), defaultdict(list)
+def add_to_dict(f):
 
-def add_to_dict(f, d):
-    with open(f) as tsvfile:
-        for line in csv.reader(tsvfile, delimiter='\t'):
-            start, end = int(line[1]), int(line[2])
-            multiplier = int(float(line[3])) 
-            d[line[0]].append((start, end, multiplier))
-    return d
+    d = defaultdict(list)
 
-def plot(d, w=500, chrom_specified='all', color='red'):
+    ftype = None
+    if f.split('.')[-1] == 'bedgraph':
+        ftype = 'bedgraph'
+        with open(f) as tsvfile:
+            for line in csv.reader(tsvfile, delimiter='\t'):
+                start, end = int(line[1]), int(line[2])
+                multiplier = int(float(line[3]))
+                if multiplier < 0:
+                    continue
+                for i in range(multiplier):
+                    d[line[0]].append(start)
 
+    elif f.split('.')[-1] == 'bed':
+        ftype = 'bed'
+        with open(f) as tsvfile:
+            for line in csv.reader(tsvfile, delimiter='\t'):
+                start, end = int(line[1]), int(line[2])
+                d[line[0]].extend((range(start, end + 1)))
+    return d, ftype 
+
+def plot(d, axes, chrom_specified='all', color='red', sample=None, ftype=None):
+    
+    idx = 0
+    if chrom_specified == 'all':
+        lst = [0, 1, 2, 3]
+
+        p = itertools.permutations(lst, 2)
+        p = [list(x) for x in p]
+        p.append([0,0])
+        p.append([1,1])
+        p.append([2,2])
+        p.append([3,3])
+
+        p = sorted(p, key=lambda x: (x[0], x[1]))
 
     for chrom in d:
-        xy_vals = defaultdict(list)
+        if chrom == 'chrM':
+            continue
         if chrom_specified != 'all' and chrom_specified != chrom:
             continue
-        max_pos = max([x[1] for x in d[chrom]])
-        max_mult = max([x[2] for x in d[chrom]])
-        sliding_window = [(x, x + w) for x in range(1, max_pos) if x % w == 0 or x == 0]
         values = d[chrom]
-        for val in values:
-            window = [w for w in sliding_window if val[0] in range(w[0], w[1])]
-            multiplier = val[2]
-            if len(window) > 0:
-                xy_vals[window[0]].append(multiplier)
-
         if chrom_specified != 'all':
-            for xy in xy_vals:
-                plt.plot([xy[0], xy[1]], [np.mean(xy_vals[xy]), np.mean(xy_vals[xy])], c=color)
+            if ftype == 'bed':
+                sns.rugplot(np.array(values), color=color)
+            else:
+                sns.distplot(np.array(values), color=color, rug=False, hist=False,
+                                                                   hist_kws={"histtype":"step",
+                                                                             "lw":1,
+                                                                             "color":color},
+                                                                   kde_kws={"color":color,
+                                                                            "lw":2,
+                                                                            "bw":0.1},
+                                                                   label=sample)
         else:
-            f, axes = plt.subplots(4, 4, figsize=(15, 15))
-            
-            lst = [0, 1, 2, 3]
-
-            p = itertools.permutations(lst, 2)
-            p = [list(x) for x in p]
-            p.append([0,0])
-            p.append([1,1])
-            p.append([2,2])
-            p.append([3,3])
-
-            p = sorted(p, key=lambda x: (x[0], x[1]))
-            idx = 0
-            for xy in xy_vals:
-                plt.plot([xy[0], xy[1]], [np.mean(xy_vals[xy]), np.mean(xy_vals[xy])], ax=axes[p[idx][0], p[idx][1]])
+            if ftype == 'bed':
+                sns.rugplot(np.array(values), color=color)
+            else:
+                sns.distplot(np.array(values), color=color, ax=axes[p[idx][0], p[idx][1]], 
+                                                                   rug=False, hist=False,
+                                                                   hist_kws={"histtype":"step",
+                                                                             "lw":1,
+                                                                             "color":color},
+                                                                   kde_kws={"color":color,
+                                                                            "lw":2,
+                                                                            "bw":0.1},
+                                                                   label=sample)
             sns.despine(top=True, left=True)
             idx += 1
-        plt.savefig('out.eps')
 
-colors = {0:'red', 1:'blue'}
+    keys = d.keys()
+    keys = [x for x in keys if x != 'chrM']
+    keys = sorted(keys, key=lambda x: int(x.split('chr')[1]))
+
+    if args.chrom == 'all':
+        count = 0
+        for ax in axes:
+            for a in ax:
+                a.get_yaxis().set_visible(False)
+                a.get_xaxis().set_visible(False)
+            #    a.legend().set_visible(False)
+                a.set_title(r"\textbf{%s}" % keys[count])
+                count += 1
+    plt.savefig('out.eps')
+
+colors = sns.color_palette("hls", len(args.f))
 count = 0
+if args.chrom == 'all':
+    fig, axes = plt.subplots(4, 4, figsize=(15, 15))
+else:
+    fig, axes = None, None
 for f in args.f:
-    di = defaultdict(list)
-    d = add_to_dict(f, di)
-    plot(d, w=args.w, chrom_specified=args.chrom, color=colors[count])
+    d, ftype = add_to_dict(f)
+    plot(d, axes, chrom_specified=args.chrom, color=colors[count], sample=f, ftype=ftype)
     count += 1
-
-"""
-count = 0
-for ax in axes:
-    for a in ax:
-        a.get_yaxis().set_visible(False)
-        a.get_xaxis().set_visible(False)
-        a.legend().set_visible(False)
-        if pvals[count] < 0.05:
-            a.set_title(r"\textbf{%s}" % keys[count])
-        count += 1
-plt.savefig('out.eps')
-"""
